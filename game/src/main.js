@@ -1,134 +1,87 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
-// (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
-// moves between four screens: title, play, paused and game over.
-//
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
-import { BEST_KEY, LIVES, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { stageShot } from './shots.js';
-
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
-const MAX_FRAME = 0.25;
+// SUNSET BAY - boot, fixed-step loop, screen state machine and deterministic screenshot mode.
+import { STEP } from './config.js';
+import { createInput, ACTION_CONFIRM, ACTION_CONTINUE, ACTION_PAUSE } from './input.js';
+import { createGame } from './game.js';
+import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED } from './render.js';
 
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+const seed = Number.isInteger(seedParam) ? seedParam : 4242;
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
-const world = createWorld(createRandom(seed));
 const renderer = createRenderer(canvas);
+const game = createGame(canvas, seed);
 
-function readBest() {
-  try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-  } catch {
-    return 0;
-  }
-}
+function announce(text) { if (status) status.textContent = text; }
 
-function saveBest(value) {
-  try {
-    window.localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Storage can be off (private windows): the best score then lasts this visit only.
-  }
-}
+// Publish live state for the capture helper and any dev tooling.
+window.__sunsetBay = game;
+game.shotMode = shot || null;
 
-function runShot(name) {
-  const scene = stageShot(name, world);
+if (shot) {
+  game.stageShot(shot);
+  document.title = `SUNSET BAY - ${shot}`;
+  announce(`Sunset Bay screenshot scene: ${shot}`);
   let painted = 0;
   function paint() {
-    renderer.draw(world.state, scene.screen, scene.best);
+    window.__sbMouse = { x: renderer.canvas.width / 2 + 120, y: renderer.canvas.height / 2 - 40 };
+    renderer.draw(game, SCREEN_PLAY);
     painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
+    if (painted < 3) requestAnimationFrame(paint);
+    else window.__sunsetBayReady = true;
   }
   requestAnimationFrame(paint);
-}
-
-function runGame() {
+} else {
+  document.title = 'SUNSET BAY';
   const input = createInput(canvas);
   let screen = SCREEN_TITLE;
-  let best = readBest();
   let accumulator = 0;
   let last = performance.now();
 
-  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
-  function announce(message) {
-    status.textContent = message;
-  }
+  canvas.addEventListener('mousedown', () => game.audio.resume());
+  window.addEventListener('keydown', () => game.audio.resume(), { once: true });
 
-  function startGame() {
-    world.reset();
-    accumulator = 0;
-    screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
-  }
-
-  function endGame() {
-    screen = SCREEN_OVER;
-    if (world.state.score > best) {
-      best = world.state.score;
-      saveBest(best);
-    }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
-  }
-
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
-    }
-  }
-
-  function step() {
-    if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
-      return;
-    }
-    const events = world.step(STEP, input.direction(), false);
-    if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
+  function actionsThisFrame() {
+    return input.consume();
   }
 
   function frame(now) {
     requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
+    accumulator += Math.min((now - last) / 1000, 0.25);
     last = now;
-    handleActions();
-    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        step();
-        accumulator -= STEP;
+    const { actions } = actionsThisFrame();
+    window.__sbMouse = { x: input.mouse.x, y: input.mouse.y };
+
+    if (screen === SCREEN_TITLE) {
+      if (actions.has(ACTION_CONFIRM)) {
+        screen = SCREEN_PLAY; game.state.started = true;
+        announce('New game. Find Rina downtown.');
+      } else if (actions.has(ACTION_CONTINUE)) {
+        if (game.load()) { game.state.started = true; screen = SCREEN_PLAY; announce('Continue. Welcome back.'); }
+        else announce('No saved game found. Press ENTER for a new game.');
       }
+    } else if (screen === SCREEN_PLAY) {
+      if (actions.has(ACTION_PAUSE)) { screen = SCREEN_PAUSED; announce('Paused.'); }
+      else {
+        let guard = 0;
+        while (accumulator >= STEP && guard < 5) {
+          game.step(STEP, input, actions, screen);
+          accumulator -= STEP; guard += 1;
+          if (game.state.dead || game.state.busted) break;
+        }
+        if (game.state.dead) { screen = SCREEN_WASTED; announce('Wasted.'); }
+        else if (game.state.busted) { screen = SCREEN_BUSTED; announce('Busted.'); }
+      }
+    } else if (screen === SCREEN_PAUSED) {
+      if (actions.has(ACTION_PAUSE) || actions.has(ACTION_CONFIRM)) { screen = SCREEN_PLAY; announce('Playing.'); }
     } else {
-      accumulator = 0;
+      if (actions.has(ACTION_CONFIRM)) { game.respawn(); screen = SCREEN_PLAY; announce('Back on the street.'); }
     }
-    renderer.draw(world.state, screen, best);
+    if (screen !== SCREEN_PLAY) accumulator = 0;
+    renderer.draw(game, screen);
   }
-
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    }
-  });
-
-  announce('Block Dodger. Press Space or click to start.');
+  announce('SUNSET BAY. Press ENTER for a new game, C to continue.');
   requestAnimationFrame(frame);
 }
-
-if (shot) runShot(shot);
-else runGame();

@@ -1,0 +1,4 @@
+out/
+.serena/
+node_modules/
+*.log

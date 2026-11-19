@@ -1,61 +1,79 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+// SUNSET BAY - global tuning constants and the original colour palette.
+// The whole city is generated from these numbers, so every screen is reproducible.
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
-
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
+export const CELL = 324;          // one city block + its surrounding roads
+export const BLOCK = 260;         // buildable lot inside a cell
+export const ROAD = CELL - BLOCK; // street width around each lot
+export const GRID = 9;            // GRID x GRID cells
+export const WORLD_SIZE = GRID * CELL;
 export const STEP = 1 / 60;
 
-export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
-};
-
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
-};
-
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
 export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
+  asphalt:     '#3a3f4b',
+  asphaltDark: '#2c3038',
+  lane:        '#e8c46a',
+  sidewalk:    '#9aa3ad',
+  sidewalkDark:'#7e8791',
+  grass:       '#5f8a4a',
+  sand:        '#e6cf99',
+  water:       '#2f7f9e',
+  waterDeep:   '#1d5e78',
+  roofDay:     '#b8b3a8',
+  wallDay:     '#9a9385',
+  nightSky:    '#141a33',
+  daySky:      '#7fc4e8',
+  neonPink:    '#ff4fa3',
+  neonCyan:    '#38e6ff',
+  neonGold:    '#ffcf5c',
+  text:        '#f7f3e8',
+  hudPanel:    'rgba(12,16,28,0.74)',
+  health:      '#4ce07a',
+  armour:      '#54a8ff',
+  star:        '#ffd34d',
 };
 
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+// Districts are chosen by cell position, giving the city distinct neighbourhoods.
+export function districtAt(col, row) {
+  if (row === 0 || (col >= 6 && row === 1)) return 'docks';
+  if (col === GRID - 1 && row <= 4) return 'harbour';
+  if (col === 0) return 'beach';
+  if (col >= GRID - 3 && row >= 3 && row <= 6) return 'nightlife';
+  if (col >= 3 && col <= 5 && row >= 2 && row <= 5) return 'downtown';
+  return 'suburbs';
+}
 
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+export const DISTRICT_LABEL = {
+  docks: 'IRONWORKS DOCKS',
+  harbour: 'SUNSET HARBOUR',
+  beach: 'PALMSTRAND BEACH',
+  nightlife: 'NEON QUARTER',
+  downtown: 'DOWNTOWN',
+  suburbs: 'CYPRESS HEIGHTS',
+};
+
+// Original street names, used for the district signs on the minimap and HUD.
+export const STREET_NAMES = [
+  'MARINA BLVD', 'CORAL AVE', 'SUNSET DR', 'PALM ST', 'CYPRESS LN',
+  'NEON WAY', 'HARBOR RD', 'BAYVIEW ST', 'DOLPHIN CT', 'ORCHID AVE',
+];
+
+export const SHOP_NAMES = [
+  'RAMDAN MART', 'BAY BAKERY', 'SUNSET MOTEL', 'NEON NOODLES', 'CORAL COFFEE',
+  'PIER 9 SEAFOOD', 'CYPRESS AUTO', 'PALM LAUNDRY', 'HARBOR GOODS', 'STARLIGHT BAR',
+];
+
+export const VEHICLE_TYPES = {
+  sedan:   { topSpeed: 250, accel: 150, grip: 4.6, mass: 1.0, color: '#c94f4f', w: 26, h: 46, value: 900 },
+  sports:  { topSpeed: 390, accel: 250, grip: 5.4, mass: 0.8, color: '#ff9f2e', w: 24, h: 44, value: 2400 },
+  taxi:    { topSpeed: 250, accel: 140, grip: 4.2, mass: 1.2, color: '#f2c33b', w: 27, h: 48, value: 1100 },
+  truck:   { topSpeed: 200, accel: 105, grip: 3.2, mass: 2.0, color: '#8a97a6', w: 32, h: 64, value: 1800 },
+  cruiser: { topSpeed: 320, accel: 190, grip: 5.0, mass: 1.1, color: '#dfe6ee', w: 26, h: 48, value: 0 },
+};
+
+export const WEAPONS = {
+  fists:   { name: 'FISTS',   damage: 12, rate: 0.36, range: 34, ammo: Infinity },
+  pistol:  { name: 'PISTOL',  damage: 26, rate: 0.16, range: 460, ammo: 12 },
+  smg:     { name: 'SMG',     damage: 16, rate: 0.075, range: 400, ammo: 40 },
+};
+
+export const SHOT_SCENES = ['cover', 'foot', 'drive', 'chase'];

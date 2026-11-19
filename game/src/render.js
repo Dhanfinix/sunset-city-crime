@@ -1,141 +1,176 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
+// Top-level painter: lighting, the camera transform, all entities, weather and the HUD.
+import { PALETTE } from './config.js';
+import { drawWorld } from './world.js';
+import { drawPlayer } from './entities.js';
+import { drawVehicle } from './vehicles.js';
+import { drawHUD } from './hud.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
+export const SCREEN_BUSTED = 'busted';
+export const SCREEN_WASTED = 'wasted';
 
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
+// A cyan pool of light under the player's car so it reads at a glance in a busy chase.
+function drawVehicleGlow(ctx, v) {
+  ctx.save();
+  ctx.translate(v.x, v.y);
+  ctx.rotate(v.angle);
+  ctx.fillStyle = 'rgba(56,230,255,0.16)';
+  ctx.beginPath(); ctx.ellipse(0, 0, 36, 56, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(56,230,255,0.55)'; ctx.lineWidth = 2; ctx.stroke();
+  const beam = ctx.createLinearGradient(10, 0, 320, 0);
+  beam.addColorStop(0, 'rgba(255,246,196,0.20)');
+  beam.addColorStop(1, 'rgba(255,246,196,0)');
+  ctx.fillStyle = beam;
+  ctx.beginPath(); ctx.moveTo(14, -10); ctx.lineTo(320, -95); ctx.lineTo(320, 95); ctx.lineTo(14, 10); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
 
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
-    }
-    return text;
-  };
+// A pulsing gold beacon in the world marks the active objective (matched on the minimap).
+function drawWorldMarker(ctx, m, time) {
+  const pulse = 0.5 + 0.5 * Math.sin(time * 4);
+  ctx.save();
+  ctx.translate(m.x, m.y);
+  ctx.strokeStyle = m.kind === 'collect' ? PALETTE.neonCyan : PALETTE.neonGold;
+  ctx.globalAlpha = 0.55 + pulse * 0.35;
+  ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 18;
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, 26 + pulse * 6, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -44); ctx.lineTo(0, -64); ctx.stroke();
+  if (m.label && m.kind === 'mission') {
+    ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PALETTE.neonGold;
+    ctx.fillText(m.label, 0, -74);
+  }
+  ctx.restore();
 }
 
 export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
-
+  const ctx = canvas.getContext('2d');
   function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
+    canvas.width = Math.max(640, window.innerWidth | 0);
+    canvas.height = Math.max(480, window.innerHeight | 0);
   }
-
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
-
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
-      }
-    }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
-    }
-  }
-
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
-  }
-
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
-    }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
-  }
-
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
-  }
-
   resize();
   window.addEventListener('resize', resize);
-  return { draw };
+
+  function drawScene(g) {
+    const { camera, world, state } = g;
+    camera.width = canvas.width; camera.height = canvas.height;
+    const night = g.night();
+    const w = canvas.width, h = canvas.height;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = night > 0.5 ? PALETTE.nightSky : PALETTE.daySky;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.save();
+    const shakeX = (Math.random() - 0.5) * g.effects.shake;
+    const shakeY = (Math.random() - 0.5) * g.effects.shake;
+    ctx.translate(w / 2 + shakeX, h / 2 + shakeY);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-w / 2, -h / 2);
+
+    drawWorld(ctx, world, camera, { night, time: state.time, rain: state.rain });
+    // Re-assert the exact world transform before dynamic entities (robust against any nested save state).
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.translate(w / 2 + shakeX, h / 2 + shakeY);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-camera.x, -camera.y);
+    g.effects.draw(ctx, camera);
+    if (state.player.inVehicle) drawVehicleGlow(ctx, state.player.inVehicle);
+    for (const v of g.vehicles.vehicles) {
+      if (Math.abs(v.x - camera.x) > w / 2 + 90 || Math.abs(v.y - camera.y) > h / 2 + 90) continue;
+      drawVehicle(ctx, v, night);
+    }
+    g.peds.draw(ctx, camera);
+    g.police.drawOfficers(ctx, camera);
+    drawPlayer(ctx, state.player, camera, state.player.fireTimer > 0.03 ? 1 : 0);
+    g.combat.draw(ctx, camera);
+    for (const m of g.missions.markers) drawWorldMarker(ctx, m, state.time);
+
+    // Headlight cones at night, anchored to the player's aim.
+    if (night > 0.35 && !state.player.inVehicle) {
+      const p = state.player;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+      const grad = ctx.createLinearGradient(0, 0, 240, 0);
+      grad.addColorStop(0, `rgba(255,246,200,${0.14 * night})`);
+      grad.addColorStop(1, 'rgba(255,246,200,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(240, -70); ctx.lineTo(240, 70); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Night tint and vignette in screen space.
+    if (night > 0.02) {
+      ctx.fillStyle = `rgba(10,14,40,${night * 0.16})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    const vg = ctx.createRadialGradient(w / 2, h / 2, h * 0.3, w / 2, h / 2, h * 0.85);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.34)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
+
+    g.effects.drawRain(ctx, camera, state.rain, state.time);
+    drawHUD(ctx, g, w, h);
+  }
+
+  function drawOverlay(screen, g) {
+    const w = canvas.width, h = canvas.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (screen === SCREEN_PLAY) return;
+    ctx.fillStyle = screen === SCREEN_BUSTED ? 'rgba(10,26,60,0.72)'
+      : screen === SCREEN_WASTED ? 'rgba(60,10,10,0.72)' : 'rgba(6,10,22,0.78)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.textAlign = 'center';
+    if (screen === SCREEN_TITLE) {
+      ctx.save();
+      ctx.shadowColor = PALETTE.neonPink; ctx.shadowBlur = 26;
+      ctx.fillStyle = PALETTE.neonPink;
+      ctx.font = 'bold 78px "Trebuchet MS", sans-serif';
+      ctx.fillText('SUNSET BAY', w / 2, h / 2 - 92);
+      ctx.restore();
+      ctx.fillStyle = PALETTE.neonCyan;
+      ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
+      ctx.fillText('A SUN-SOAKED CRIME CITY', w / 2, h / 2 - 52);
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = '16px "Trebuchet MS", sans-serif';
+      ctx.fillText('NEW GAME  [ENTER]        CONTINUE  [C]', w / 2, h / 2 + 14);
+      ctx.fillStyle = '#a9b7c8';
+      ctx.font = '14px "Trebuchet MS", sans-serif';
+      [
+        'WASD move · SHIFT sprint · mouse aim · click fire · Q switch weapon · R reload',
+        'E enter/exit vehicles · T toggle rain · F6 save · P pause',
+        'Steal cars, take jobs from Rina, and lose the cops before the stars fill.',
+      ].forEach((line, i) => ctx.fillText(line, w / 2, h / 2 + 58 + i * 26));
+    } else if (screen === SCREEN_PAUSED) {
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = 'bold 56px "Trebuchet MS", sans-serif';
+      ctx.fillText('PAUSED', w / 2, h / 2 - 20);
+      ctx.fillStyle = '#a9b7c8';
+      ctx.font = '18px "Trebuchet MS", sans-serif';
+      ctx.fillText('Press P or ESC to resume  ·  F6 to save', w / 2, h / 2 + 26);
+    } else if (screen === SCREEN_BUSTED || screen === SCREEN_WASTED) {
+      ctx.save();
+      ctx.shadowColor = screen === SCREEN_BUSTED ? '#4aa3ff' : '#ff5a5a';
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = PALETTE.text;
+      ctx.font = 'bold 72px "Trebuchet MS", sans-serif';
+      ctx.fillText(screen === SCREEN_BUSTED ? 'BUSTED' : 'WASTED', w / 2, h / 2 - 16);
+      ctx.restore();
+      ctx.fillStyle = '#cbd6e2';
+      ctx.font = '18px "Trebuchet MS", sans-serif';
+      ctx.fillText('Press ENTER to respawn at the hospital', w / 2, h / 2 + 34);
+    }
+  }
+
+  return {
+    canvas, ctx,
+    draw(g, screen) { drawScene(g); drawOverlay(screen, g); },
+    drawScene,
+  };
 }

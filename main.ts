@@ -17,6 +17,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
+// SUNSET BAY - original open-world crime game built as static ES modules under game/.
+const GAME_TITLE = 'Sunset Bay';
+const OUTPUT_TEXT_BUDGET = 163840;
+
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
