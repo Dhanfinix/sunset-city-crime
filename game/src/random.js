@@ -15,6 +15,11 @@ export function createRandom(seed = 1) {
     pick(list) { return list[Math.floor(next() * list.length)]; },
     chance(p) { return next() < p; },
   };
+  next.range = (lo, hi) => lo + next() * (hi - lo);
+  next.int = (lo, hi) => Math.floor(next.range(lo, hi + 1));
+  next.pick = (arr) => arr[Math.floor(next() * arr.length) % arr.length];
+  next.chance = (p) => next() < p;
+  return next;
 }
 
 export function hash2(x, y, seed = 0) {

@@ -5,7 +5,7 @@ import { createGame } from './game.js';
 import { createRenderer, SCREEN_TITLE, SCREEN_PLAY, SCREEN_PAUSED, SCREEN_BUSTED, SCREEN_WASTED } from './render.js';
 
 const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
+const shotName = params.get('shot');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : 4242;
 
@@ -39,6 +39,8 @@ if (shot) {
   let screen = SCREEN_TITLE;
   let accumulator = 0;
   let last = performance.now();
+  const menuItems = ['NEW GAME', 'CONTINUE', 'CONTROLS'];
+  let controlsPage = false;
 
   canvas.addEventListener('mousedown', () => game.audio.resume());
   window.addEventListener('keydown', () => game.audio.resume(), { once: true });
